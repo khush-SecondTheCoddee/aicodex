@@ -1,29 +1,21 @@
-# TermuxCoderAI (Production-Ready, No Dependencies)
+# TermuxCoderAI (No Dependencies)
 
-`TermuxCoderAI` is a local coding assistant designed for **Termux (non-root)** with **zero install requirements**.
+A custom offline coding assistant designed for **Termux (non-root)** using only built-in shell tools.
 
-## Guarantees
+## Why this fits your requirement
 
-- No external APIs.
-- No pip/npm/pkg/apt installs.
-- Runs with built-in shell tooling (`bash`, `awk`, `sed`, `grep`, `tail`, `date`, etc.).
+- No package installation required.
+- No Python modules, Node modules, or external APIs.
+- Runs with `bash` and core utilities available in typical Termux setups.
 
-## Why this is production-ready
+## Features
 
-- Strict bash mode: `set -euo pipefail`
-- Atomic writes for state files (prevents partial/corrupt output)
-- Persistent mode/config state
-- History rotation (bounded file growth)
-- Built-in health checks (`--selftest` / `:selftest`)
-- One-shot API mode for scripting (`--prompt "..."`)
+- Interactive local coding assistant loop.
+- Modes: `code`, `chat`, `shell`.
+- Quick scaffold generator for `python`, `bash`, and `c` projects.
+- Saves last response and keeps local history.
 
-## Resource profile (6GB RAM compatible)
-
-- Process memory is lightweight (shell script + small text state files).
-- No model weights or background services are loaded.
-- Input length and history size are bounded for predictable resource usage.
-
-## Quick start
+## Usage
 
 ```bash
 chmod +x termux_coder_ai.sh
@@ -63,3 +55,21 @@ Inside interactive mode:
 
 This is a **local rule-based coding engine** implemented for reliability in restricted environments.
 It does not depend on neural model binaries, so it remains usable offline and on constrained mobile devices.
+Inside the assistant:
+
+- `:help`
+- `:mode code`
+- `:scaffold python myapp`
+- `:save output.txt`
+- `:history`
+- `:quit`
+
+## Example prompt
+
+- `create a python todo app`
+- `explain binary search in simple terms`
+- `write a bash backup script`
+
+## Notes
+
+This is a **rule-based local model** (offline assistant behavior) rather than a neural LLM. It is intentionally dependency-free and practical for restricted environments.
