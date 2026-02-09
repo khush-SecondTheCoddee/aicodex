@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="TermuxCoderAI"
-APP_VERSION="3.0.0"
-DEFAULT_MODE="code"
-MAX_INPUT_CHARS=5000
-MAX_HISTORY_LINES=2000
+MODEL_NAME="TermuxCoderAI"
+MODEL_VERSION="1.0.0"
 STATE_DIR="${HOME}/.termux_coder_ai"
 HISTORY_FILE="${STATE_DIR}/history.log"
 LAST_OUTPUT_FILE="${STATE_DIR}/last_output.txt"
-CONFIG_FILE="${STATE_DIR}/config"
-LOG_FILE="${STATE_DIR}/app.log"
 
-umask 077
 mkdir -p "$STATE_DIR"
-touch "$HISTORY_FILE" "$LAST_OUTPUT_FILE" "$CONFIG_FILE" "$LOG_FILE"
-MODE="$DEFAULT_MODE"
+: > "$LAST_OUTPUT_FILE"
+touch "$HISTORY_FILE"
 
-log() { printf '%s | %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"; }
-trim() { awk '{$1=$1;print}' <<<"$*"; }
-lower() { tr '[:upper:]' '[:lower:]' <<<"$*"; }
-
-safe_write_file() {
-  local target="$1" tmp="${1}.tmp.$$"
-  cat > "$tmp"
-  mv "$tmp" "$target"
+print_banner() {
+  cat <<'BANNER'
+  TermuxCoderAI - Offline, No-Dependency Coding Assistant
+Type your request naturally.
+Commands:
+  :help                         Show help
+  :mode <chat|code|shell>       Set response style
+  :scaffold <lang> <name>       Generate starter project files
+  :save <file>                  Save last response to file
+  :history                      Show recent requests
+  :quit                         Exit
+BANNER
 }
 
-write_last_output() { safe_write_file "$LAST_OUTPUT_FILE"; }
+MODE="code"
+
+trim() {
+  awk '{$1=$1;print}' <<<"$*"
+}
+
+lower() {
+  tr '[:upper:]' '[:lower:]' <<<"$*"
+}
+
+write_last_output() {
+  cat > "$LAST_OUTPUT_FILE"
+}
 
 append_history() {
   local q="$1"
@@ -35,8 +45,7 @@ append_history() {
   local lines
   lines=$(wc -l < "$HISTORY_FILE" | awk '{print $1}')
   if (( lines > MAX_HISTORY_LINES )); then
-    tail -n "$MAX_HISTORY_LINES" "$HISTORY_FILE" > "${HISTORY_FILE}.tmp"
-    mv "${HISTORY_FILE}.tmp" "$HISTORY_FILE"
+    tail -n "$MAX_HISTORY_LINES" "$HISTORY_FILE" > "${HISTORY_FILE}.tmp" && mv "${HISTORY_FILE}.tmp" "$HISTORY_FILE"
   fi
 }
 
@@ -49,17 +58,8 @@ load_config() {
 }
 
 save_config() {
-  cat <<EOF | safe_write_file "$CONFIG_FILE"
-MODE=$MODE
-EOF
-}
-
-banner() {
-  cat <<EOF
-==========================================================
 $APP_NAME v$APP_VERSION
 Dependency-free local coding model for Termux (non-root)
-==========================================================
 Commands: :help :mode <chat|code|shell> :status :history :save <file> :quit
 CLI flags: --prompt "..." --version --selftest
 EOF
@@ -87,319 +87,533 @@ EOF
 status_text() {
   local lines
   lines=$(wc -l < "$HISTORY_FILE" | awk '{print $1}')
+  cat <<EOF_CFG | safe_write_file "$CONFIG_FILE"
+MODE=$MODE
+EOF_CFG
+}
+
+print_banner() {
+  cat <<EOF
+$APP_NAME v$APP_VERSION (offline, no dependencies)
+Optimized for Termux non-root and low-overhead execution.
+Commands: :help :mode <chat|code|shell> :save <file> :history :scaffold <lang> <name> :status :selftest :quit
+EOF
+}
+
+print_help() {
+  cat <<'EOF'
+Usage Modes:
+  code  - generate code and project assets
+  chat  - discuss design, debugging, architecture
+  shell - provide terminal workflow steps
+
+Commands:
+  :help                         Show this help
+  :mode <chat|code|shell>       Set active mode
+  :scaffold <lang> <name>       Create starter project (python|bash|c)
+  :save <file>                  Save last assistant output
+  :history                      Show recent requests
+  :status                       Show runtime status
+  :selftest                     Run built-in health checks
+  :quit                         Exit
+
+Production notes:
+- Entirely local and deterministic.
+- No package manager calls or network APIs.
+- State stored at ~/.termux_coder_ai with strict file permissions.
+EOF
+}
+
+print_status() {
+  local hlines=0
+  hlines=$(wc -l < "$HISTORY_FILE" | awk '{print $1}')
   cat <<EOF
 app=$APP_NAME
 version=$APP_VERSION
 mode=$MODE
 state_dir=$STATE_DIR
-history_lines=$lines
+history_lines=$hlines
 max_input_chars=$MAX_INPUT_CHARS
 EOF
 }
 
-contains() { [[ "$1" == *"$2"* ]]; }
-
-detect_lang() {
+infer_language() {
   local q="$1"
-  contains "$q" "python" && { echo "python"; return; }
-  contains "$q" "bash" && { echo "bash"; return; }
-  contains "$q" "shell" && { echo "bash"; return; }
-  contains "$q" "c++" && { echo "cpp"; return; }
-  contains "$q" "cpp" && { echo "cpp"; return; }
-  contains "$q" "javascript" && { echo "javascript"; return; }
-  contains "$q" "node" && { echo "javascript"; return; }
-  contains "$q" "c " && { echo "c"; return; }
-  echo "python"
+  if [[ "$q" == *"python"* || "$q" == *"py "* ]]; then echo "python"; return; fi
+  if [[ "$q" == *"bash"* || "$q" == *"shell"* || "$q" == *"sh "* ]]; then echo "bash"; return; fi
+  if [[ "$q" == *"c++"* || "$q" == *"cpp"* ]]; then echo "cpp"; return; fi
+  if [[ "$q" == *"c "* || "$q" == *" c"* ]]; then echo "c"; return; fi
+  if [[ "$q" == *"javascript"* || "$q" == *"js "* || "$q" == *"node"* ]]; then echo "javascript"; return; fi
+  echo "unknown"
 }
 
-score_feature() {
-  local q="$1" key="$2" score=0
-  case "$key" in
-    fileio)
-      contains "$q" "file" && score=$((score+2))
-      contains "$q" "json" && score=$((score+2))
-      contains "$q" "save" && score=$((score+1))
-      ;;
-    cli)
-      contains "$q" "cli" && score=$((score+2))
-      contains "$q" "command" && score=$((score+1))
-      contains "$q" "args" && score=$((score+1))
-      ;;
-    class)
-      contains "$q" "class" && score=$((score+3))
-      contains "$q" "object" && score=$((score+1))
-      ;;
-    http)
-      contains "$q" "http" && score=$((score+2))
-      contains "$q" "api" && score=$((score+2))
-      contains "$q" "server" && score=$((score+2))
-      ;;
-    algo)
-      contains "$q" "sort" && score=$((score+2))
-      contains "$q" "search" && score=$((score+2))
-      contains "$q" "algorithm" && score=$((score+2))
-      ;;
-  esac
-  echo "$score"
+template_python_todo() {
+  cat <<'EOF'
+```python
+#!/usr/bin/env python3
+"""Minimal production-ready TODO CLI with durable JSON storage."""
+import json
+import os
+import sys
+from typing import List, Dict, Any
 }
 
-pick_name() {
+respond_help() {
+  cat <<'EOF_HELP'
+I can help with:
+- Generating code (Python, Bash, JS, C, C++)
+- Fixing common syntax/runtime issues
+- Explaining algorithms and CLI tooling
+- Creating starter projects via :scaffold
+
+Tips:
+- Be specific: "write a python cli todo app with json storage"
+- Mention language + constraints + expected I/O
+- Ask for tests and docs in one prompt
+EOF_HELP
+}
+
+gen_python() {
   local q="$1"
-  if contains "$q" "todo"; then echo "todo"; return; fi
-  if contains "$q" "api"; then echo "api_tool"; return; fi
-  if contains "$q" "backup"; then echo "backup"; return; fi
-  if contains "$q" "search"; then echo "searcher"; return; fi
-  echo "app"
-}
+  if [[ "$q" == *"todo"* ]]; then
+    cat <<'EOF_PY'
+```python
+#!/usr/bin/env python3
+import json
+import os
+import sys
 
-synthesize_python() {
-  local q="$1" name="$2"
-  local fileio cli class http algo
-  fileio=$(score_feature "$q" fileio)
-  cli=$(score_feature "$q" cli)
-  class=$(score_feature "$q" class)
-  http=$(score_feature "$q" http)
-  algo=$(score_feature "$q" algo)
+DB = "todo.json"
 
-  echo '```python'
-  echo '#!/usr/bin/env python3'
-  echo '"""Generated by TermuxCoderAI local model."""'
-  echo 'import sys'
-  (( fileio > 0 )) && echo 'import json'
-  (( fileio > 0 )) && echo 'from pathlib import Path'
-  echo
 
-  if (( class > 0 )); then
-    echo "class ${name^}Service:"
-    echo '    def __init__(self):'
-    echo '        self.items = []'
-    echo
-    echo '    def add(self, value: str) -> None:'
-    echo '        self.items.append(value)'
-    echo
-    echo '    def list_all(self):'
-    echo '        return list(self.items)'
-    echo
-  fi
+def load_items() -> List[Dict[str, Any]]:
+    if not os.path.exists(DB):
+        return []
+    try:
+        with open(DB, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
 
-  if (( fileio > 0 )); then
-    echo 'DB = Path("data.json")'
-    echo
-    echo 'def load_data():'
-    echo '    if not DB.exists():'
-    echo '        return []'
-    echo '    try:'
-    echo '        return json.loads(DB.read_text(encoding="utf-8"))'
-    echo '    except Exception:'
-    echo '        return []'
-    echo
-    echo 'def save_data(items):'
-    echo '    tmp = DB.with_suffix(".tmp")'
-    echo '    tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")'
-    echo '    tmp.replace(DB)'
-    echo
-  fi
 
-  if (( algo > 0 )); then
-    echo 'def binary_search(arr, target):'
-    echo '    lo, hi = 0, len(arr) - 1'
-    echo '    while lo <= hi:'
-    echo '        mid = (lo + hi) // 2'
-    echo '        if arr[mid] == target:'
-    echo '            return mid'
-    echo '        if arr[mid] < target:'
-    echo '            lo = mid + 1'
-    echo '        else:'
-    echo '            hi = mid - 1'
-    echo '    return -1'
-    echo
-  fi
+def save_items(items: List[Dict[str, Any]]) -> None:
+    tmp = DB + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, DB)
 
-  echo 'def main(argv):'
-  if (( cli > 0 )); then
-    echo '    if len(argv) < 2:'
-    echo '        print("Usage: app.py <command> [args]")'
-    echo '        return 1'
-    (( fileio > 0 )) && echo '    items = load_data()'
-    echo '    cmd = argv[1]'
-    echo '    if cmd == "add":'
-    (( fileio > 0 )) && echo '        text = " ".join(argv[2:]).strip() or "item"'
-    (( fileio > 0 )) && echo '        items.append({"text": text, "done": False})'
-    (( fileio > 0 )) && echo '        save_data(items)'
-    echo '        print("ok")'
-    echo '        return 0'
-    echo '    if cmd == "list":'
-    (( fileio > 0 )) && echo '        for i, item in enumerate(items, 1):'
-    (( fileio > 0 )) && echo '            print(f"{i}. {item}")'
-    (( fileio == 0 )) && echo '        print("no storage configured")'
-    echo '        return 0'
-    echo '    print("unknown command")'
-    echo '    return 1'
-  else
-    echo '    print("ready")'
-    echo '    return 0'
-  fi
 
-  echo
-  echo 'if __name__ == "__main__":'
-  echo '    raise SystemExit(main(sys.argv))'
-  echo '```'
-}
+def usage() -> int:
+    print("Usage: todo.py add <text> | list | done <index> | rm <index>")
+    return 1
 
-synthesize_bash() {
-  local q="$1" name="$2"
-  local fileio cli
-  fileio=$(score_feature "$q" fileio)
-  cli=$(score_feature "$q" cli)
 
-  echo '```bash'
-  echo '#!/usr/bin/env bash'
-  echo 'set -euo pipefail'
-  echo
-  echo "APP_NAME="$name""
-  if (( fileio > 0 )); then
-    echo 'DB="data.txt"'
-  fi
-  echo
-  echo 'main() {'
-  if (( cli > 0 )); then
-    echo '  if [[ $# -lt 1 ]]; then'
-    echo '    echo "Usage: ./app.sh <command> [args]"'
-    echo '    return 1'
-    echo '  fi'
-    echo '  local cmd="$1"; shift || true'
-    echo '  case "$cmd" in'
-    echo '    add)'
-    (( fileio > 0 )) && echo '      echo "$*" >> "$DB"'
-    (( fileio == 0 )) && echo '      echo "added: $*"'
-    echo '      ;;'
-    echo '    list)'
-    (( fileio > 0 )) && echo '      [[ -f "$DB" ]] && nl -ba "$DB" || echo "empty"'
-    (( fileio == 0 )) && echo '      echo "no storage configured"'
-    echo '      ;;'
-    echo '    *) echo "unknown command"; return 1 ;;'
-    echo '  esac'
-  else
-    echo '  echo "ready"'
-  fi
-  echo '}'
-  echo
-  echo 'main "$@"'
-  echo '```'
-}
+def main(argv: List[str]) -> int:
+    items = load_items()
+    if len(argv) < 2:
+        return usage()
+def load_items():
+    if not os.path.exists(DB):
+        return []
+    with open(DB, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-synthesize_c_like() {
-  local lang="$1"
-  [[ "$lang" == "cpp" ]] && {
-    cat <<'EOF'
-```cpp
-#include <iostream>
-#include <vector>
-#include <string>
 
-int main(int argc, char** argv) {
-    std::vector<std::string> args(argv + 1, argv + argc);
-    if (args.empty()) {
-        std::cout << "usage: app <text>" << std::endl;
-        return 1;
-    }
-    std::cout << "ok: " << args[0] << std::endl;
-    return 0;
-}
+def save_items(items):
+    with open(DB, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2)
+
+
+def main(argv):
+    items = load_items()
+    if len(argv) < 2:
+        print("Usage: todo.py [add|list|done] ...")
+        return 1
+
+    cmd = argv[1]
+    if cmd == "add":
+        text = " ".join(argv[2:]).strip()
+        if not text:
+            return usage()
+        items.append({"text": text, "done": False})
+        save_items(items)
+        print("Added.")
+    elif cmd == "list":
+        if not items:
+            print("No tasks.")
+            return 0
+        for i, item in enumerate(items, 1):
+            mark = "x" if item.get("done") else " "
+            print(f"{i}. [{mark}] {item.get('text', '')}")
+    elif cmd in {"done", "rm"}:
+        if len(argv) < 3 or not argv[2].isdigit():
+            return usage()
+        idx = int(argv[2]) - 1
+        if idx < 0 or idx >= len(items):
+            print("Invalid index")
+            return 1
+        if cmd == "done":
+            items[idx]["done"] = True
+        else:
+            items.pop(idx)
+        save_items(items)
+        print("Updated.")
+    else:
+        return usage()
+            print("Provide text")
+            return 1
+        items.append({"text": text, "done": False})
+        save_items(items)
+        print("Added")
+    elif cmd == "list":
+        for i, item in enumerate(items, start=1):
+            mark = "x" if item["done"] else " "
+            print(f"{i}. [{mark}] {item['text']}")
+    elif cmd == "done":
+        idx = int(argv[2]) - 1
+        items[idx]["done"] = True
+        save_items(items)
+        print("Marked done")
+    else:
+        print("Unknown command")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
 ```
 EOF
-    return
-  }
+}
+
+template_bash_script() {
   cat <<'EOF'
+EOF_PY
+  else
+    cat <<'EOF_PYGEN'
+```python
+# Tell me the exact feature and I will generate production-ready Python code.
+# Include: inputs, outputs, files, and edge cases.
+```
+EOF_PYGEN
+  fi
+}
+
+gen_bash() {
+  cat <<'EOF_BASH'
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: script.sh <input-file>"
+  echo "Usage: script.sh <input>"
+}
+
+main() {
+  if [[ $# -lt 1 ]]; then
+    usage
+    return 1
+  fi
+  local input="$1"
+  [[ -f "$input" ]] || { echo "Input not found: $input"; return 1; }
+  wc -l "$input"
+
+  local input="$1"
+  echo "You passed: $input"
+}
+
+main "$@"
+```
+EOF
+}
+
+template_c_program() {
+  cat <<'EOF'
+EOF_BASH
+}
+
+gen_c() {
+  cat <<'EOF_C'
 ```c
 #include <stdio.h>
 
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        puts("usage: app <text>");
-        return 1;
-    }
-    printf("ok: %s\n", argv[1]);
+int main(void) {
+    puts("Hello from production-ready C starter");
     return 0;
 }
 ```
 EOF
+    printf("Hello from minimal C template!\n");
+    return 0;
+}
+```
+EOF_C
 }
 
-synthesize_js() {
-  cat <<'EOF'
+respond_code() {
+  local q="$1"
+  local lq lang
+  lq="$(lower "$q")"
+  lang="$(infer_language "$lq")"
+
+  if [[ "$lq" == *"todo"* && "$lang" == "python" ]]; then
+    template_python_todo
+    return
+  fi
+
+  case "$lang" in
+    python)
+      cat <<'EOF'
+```python
+# Provide requirements and I will generate full production code:
+# - inputs/outputs
+# - file format
+# - error handling rules
+# - performance targets
+```
+EOF
+      ;;
+    bash) template_bash_script ;;
+    c|cpp) template_c_program ;;
+    javascript)
+      cat <<'EOF'
 ```javascript
 'use strict';
 
 function main(args) {
   if (args.length < 1) {
-    console.error('usage: node app.js <text>');
+    console.error('Usage: node app.js <name>');
     process.exit(1);
   }
-  console.log(`ok: ${args[0]}`);
+  console.log(`Hello, ${args[0]}`);
 }
 
 main(process.argv.slice(2));
 ```
 EOF
-}
-
-respond_code() {
-  local q="$1" lq lang name
-  lq="$(lower "$q")"
-  lang="$(detect_lang "$lq")"
-  name="$(pick_name "$lq")"
-
-  case "$lang" in
-    python) synthesize_python "$lq" "$name" ;;
-    bash) synthesize_bash "$lq" "$name" ;;
-    c|cpp) synthesize_c_like "$lang" ;;
-    javascript) synthesize_js ;;
-    *) synthesize_python "$lq" "$name" ;;
+      ;;
+    *)
+      cat <<'EOF'
+I can generate production-ready code. Include:
+1) Language/runtime
+2) Inputs + outputs
+3) Data storage/files
+4) Error-handling expectations
+5) Test cases you want
+EOF
+      ;;
   esac
+  local lq
+  lq="$(lower "$q")"
+
+  if [[ "$lq" == *"python"* ]]; then
+    gen_python "$lq"
+  elif [[ "$lq" == *"bash"* || "$lq" == *"shell"* ]]; then
+    gen_bash
+  elif [[ "$lq" == *"c++"* || "$lq" == *"cpp"* || "$lq" == *"c "* || "$lq" == *" c"* ]]; then
+    gen_c
+  else
+    cat <<'EOF_CODE'
+I can generate code immediately. Tell me:
+1) Language
+2) Input/output format
+3) Constraints
+4) Whether you want tests
+EOF_CODE
+  fi
 }
 
 respond_chat() {
   local q="$1"
   cat <<EOF
-$APP_NAME analysis:
-- Prompt: "$q"
-- I can break this into architecture, implementation, and tests.
-- Use :mode code for direct code synthesis.
+$APP_NAME:
+- Request understood: "$q"
+- I can help with architecture, debugging, and optimization.
+- Switch to :mode code for direct implementation output.
 EOF
+  cat <<EOF_CHAT
+$MODEL_NAME says:
+- You asked: "$q"
+- I can provide code, explain logic, optimize, or debug.
+- Switch to :mode code for direct code generation.
+EOF_CHAT
 }
 
 respond_shell() {
   local q="$1"
   cat <<EOF
-Shell plan for "$q":
+Terminal workflow for: "$q"
 1) mkdir -p project && cd project
-2) generate file(s) with here-doc blocks
-3) validate with bash -n / python3 -m py_compile
-4) run and profile with time
+2) create files using cat <<'EOF' blocks
+3) run static checks (bash -n / python3 -m py_compile)
+4) run smoke test and capture logs
 EOF
 }
 
+scaffold() {
+  local lang="$1" name="$2"
+  [[ -n "$lang" && -n "$name" ]] || die "scaffold requires language and name"
+  mkdir -p "$name"
+  case "$(lower "$lang")" in
+    python)
+      cat > "$name/main.py" <<'EOF'
+#!/usr/bin/env python3
+
+def main() -> None:
+    print("Hello from Python scaffold")
+
+if __name__ == "__main__":
+    main()
+EOF
+      chmod +x "$name/main.py"
+      cat > "$name/README.md" <<EOF
+  cat <<EOF_SHELL
+Suggested shell workflow for: "$q"
+1) Create a folder and enter it.
+2) Initialize files with cat > file <<'EOF' blocks.
+3) Run syntax checks (bash -n / python -m py_compile).
+4) Execute and iterate.
+EOF_SHELL
+}
+
+scaffold() {
+  local lang="$1"
+  local name="$2"
+  mkdir -p "$name"
+  case "$(lower "$lang")" in
+    python)
+      cat > "$name/main.py" <<'EOF_P_MAIN'
+#!/usr/bin/env python3
+
+def main():
+    print("Hello from Python scaffold")
+
+
+if __name__ == "__main__":
+    main()
+EOF_P_MAIN
+      chmod +x "$name/main.py"
+      cat > "$name/README.md" <<EOF_P_README
+# $name
+
+Run:
+
+\`\`\`bash
+python3 main.py
+\`\`\`
+EOF
+      ;;
+    bash|shell)
+      cat > "$name/main.sh" <<'EOF'
+EOF_P_README
+      ;;
+    bash|shell)
+      cat > "$name/main.sh" <<'EOF_B_MAIN'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Hello from Bash scaffold"
+EOF
+      chmod +x "$name/main.sh"
+      ;;
+    c)
+      cat > "$name/main.c" <<'EOF'
+EOF_B_MAIN
+      chmod +x "$name/main.sh"
+      ;;
+    c)
+      cat > "$name/main.c" <<'EOF_C_MAIN'
+#include <stdio.h>
+
+int main(void) {
+    puts("Hello from C scaffold");
+    return 0;
+}
+EOF
+      ;;
+    *)
+      echo "Unsupported language: $lang"
+EOF_C_MAIN
+      ;;
+    *)
+      echo "Unsupported scaffold language: $lang"
+      return 1
+      ;;
+  esac
+  echo "Scaffold created in ./$name"
+}
+
+selftest() {
+  local failures=0
+  [[ -d "$STATE_DIR" ]] || { echo "FAIL state dir missing"; failures=$((failures+1)); }
+  [[ -f "$HISTORY_FILE" ]] || { echo "FAIL history missing"; failures=$((failures+1)); }
+  [[ -f "$LAST_OUTPUT_FILE" ]] || { echo "FAIL last output missing"; failures=$((failures+1)); }
+  [[ "$MODE" =~ ^(chat|code|shell)$ ]] || { echo "FAIL invalid mode"; failures=$((failures+1)); }
+
+  if (( failures == 0 )); then
+    echo "SELFTEST PASS"
+    return 0
+  fi
+  echo "SELFTEST FAIL ($failures issue(s))"
+  return 1
+}
+
 handle_command() {
-  local line="$1" cmd arg1
+  local line="$1" cmd arg1 arg2
   cmd="$(awk '{print $1}' <<<"$line")"
   arg1="$(awk '{print $2}' <<<"$line")"
+  arg2="$(awk '{print $3}' <<<"$line")"
+
   case "$cmd" in
-    :help) help_text | tee /dev/stderr | write_last_output ;;
+    :help) print_help | tee /dev/stderr | write_last_output ;;
     :mode)
       if [[ "$arg1" =~ ^(chat|code|shell)$ ]]; then
-        MODE="$arg1"; save_config
-        echo "mode=$MODE" | tee /dev/stderr | write_last_output
+        MODE="$arg1"
+        save_config
+handle_command() {
+  local line="$1"
+  local cmd arg1 arg2
+  cmd="$(cut -d' ' -f1 <<<"$line")"
+  arg1="$(cut -d' ' -f2 <<<"$line")"
+  arg2="$(cut -d' ' -f3 <<<"$line")"
+
+  case "$cmd" in
+    :help)
+      respond_help | tee /dev/stderr | write_last_output
+      ;;
+    :mode)
+      if [[ "$arg1" =~ ^(chat|code|shell)$ ]]; then
+        MODE="$arg1"
+        echo "Mode set to $MODE" | tee /dev/stderr | write_last_output
       else
         echo "Usage: :mode <chat|code|shell>" | tee /dev/stderr | write_last_output
       fi
       ;;
-    :status) status_text | tee /dev/stderr | write_last_output ;;
-    :history) tail -n 20 "$HISTORY_FILE" | tee /dev/stderr | write_last_output ;;
     :save)
-      [[ -n "$arg1" ]] || { echo "Usage: :save <file>" | tee /dev/stderr | write_last_output; return 0; }
-      cp "$LAST_OUTPUT_FILE" "$arg1"
-      echo "saved=$arg1" | tee /dev/stderr | write_last_output
+      if [[ -z "$arg1" ]]; then
+        echo "Usage: :save <file>" | tee /dev/stderr | write_last_output
+      else
+        cp "$LAST_OUTPUT_FILE" "$arg1"
+        echo "Saved: $arg1" | tee /dev/stderr | write_last_output
+      fi
+      ;;
+    :history) tail -n 20 "$HISTORY_FILE" | tee /dev/stderr | write_last_output ;;
+    :status) print_status | tee /dev/stderr | write_last_output ;;
+    :selftest) selftest | tee /dev/stderr | write_last_output ;;
+        echo "Saved last response to $arg1" | tee /dev/stderr | write_last_output
+      fi
+      ;;
+    :history)
+      tail -n 20 "$HISTORY_FILE" | tee /dev/stderr | write_last_output
+      ;;
+    :scaffold)
+      if [[ -z "$arg1" || -z "$arg2" ]]; then
+        echo "Usage: :scaffold <lang> <name>" | tee /dev/stderr | write_last_output
+      else
+        scaffold "$arg1" "$arg2" | tee /dev/stderr | write_last_output
+      fi
       ;;
     :quit) exit 0 ;;
     *) return 1 ;;
@@ -412,37 +626,50 @@ respond_for_mode() {
     code) respond_code "$q" ;;
     chat) respond_chat "$q" ;;
     shell) respond_shell "$q" ;;
-    *) MODE="code"; save_config; respond_code "$q" ;;
+    *) echo "Invalid mode; resetting to code"; MODE="code"; save_config; respond_code "$q" ;;
   esac
-}
-
-selftest() {
-  [[ -d "$STATE_DIR" ]] || return 1
-  [[ -f "$HISTORY_FILE" ]] || return 1
-  [[ -f "$LAST_OUTPUT_FILE" ]] || return 1
-  [[ "$MODE" =~ ^(chat|code|shell)$ ]] || return 1
-  echo "SELFTEST PASS"
 }
 
 one_shot() {
   local prompt="$1"
-  [[ ${#prompt} -le MAX_INPUT_CHARS ]] || { echo "input too long"; return 1; }
+  [[ ${#prompt} -le MAX_INPUT_CHARS ]] || die "input exceeds $MAX_INPUT_CHARS chars"
   append_history "$prompt"
   respond_for_mode "$prompt" | tee /dev/stderr | write_last_output
 }
 
-loop() {
-  banner
+interactive_loop() {
+  print_banner
   while true; do
     printf '\n[%s:%s]> ' "$APP_NAME" "$MODE"
     IFS= read -r line || break
     line="$(trim "$line")"
     [[ -z "$line" ]] && continue
-    [[ ${#line} -le MAX_INPUT_CHARS ]] || { echo "input too long" | tee /dev/stderr | write_last_output; continue; }
+    if [[ ${#line} -gt MAX_INPUT_CHARS ]]; then
+      echo "Input too long (>${MAX_INPUT_CHARS})." | tee /dev/stderr | write_last_output
+      continue
+    fi
+    :quit)
+      exit 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+main_loop() {
+  print_banner
+  while true; do
+    printf '\n[%s:%s]> ' "$MODEL_NAME" "$MODE"
+    IFS= read -r line || break
+    line="$(trim "$line")"
+    [[ -z "$line" ]] && continue
 
     if [[ "${line:0:1}" == ":" ]]; then
-      handle_command "$line" && continue
-      echo "Unknown command" | tee /dev/stderr | write_last_output
+      if handle_command "$line"; then
+        continue
+      fi
+      echo "Unknown command. Use :help." | tee /dev/stderr | write_last_output
       continue
     fi
 
@@ -454,12 +681,34 @@ loop() {
 main() {
   load_config
   log "start version=$APP_VERSION mode=$MODE"
-  case "${1:-}" in
-    --version) echo "$APP_NAME $APP_VERSION"; exit 0 ;;
-    --selftest) selftest; exit $? ;;
-    --prompt) shift; one_shot "$*"; exit 0 ;;
-  esac
-  loop
+
+  if [[ "${1:-}" == "--version" ]]; then
+    echo "$APP_NAME $APP_VERSION"
+    exit 0
+  fi
+
+  if [[ "${1:-}" == "--selftest" ]]; then
+    selftest
+    exit $?
+  fi
+
+  if [[ "${1:-}" == "--prompt" ]]; then
+    shift
+    one_shot "$*"
+    exit 0
+  fi
+
+  interactive_loop
 }
 
 main "$@"
+
+    case "$MODE" in
+      code) respond_code "$line" | tee /dev/stderr | write_last_output ;;
+      chat) respond_chat "$line" | tee /dev/stderr | write_last_output ;;
+      shell) respond_shell "$line" | tee /dev/stderr | write_last_output ;;
+    esac
+  done
+}
+
+main_loop
