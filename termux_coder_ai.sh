@@ -59,7 +59,7 @@ load_config() {
 
 save_config() {
 $APP_NAME v$APP_VERSION
-Dependency-free local coding model for Termux (non-root)
+Dependency-free local coding model for Termux
 Commands: :help :mode <chat|code|shell> :status :history :save <file> :quit
 CLI flags: --prompt "..." --version --selftest
 EOF
