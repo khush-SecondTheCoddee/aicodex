@@ -22,6 +22,39 @@ chmod +x termux_coder_ai.sh
 ./termux_coder_ai.sh
 ```
 
+## Command mode
+
+Inside interactive mode:
+
+- `:help`
+- `:mode code`
+- `:mode chat`
+- `:mode shell`
+- `:scaffold python myapp`
+- `:status`
+- `:selftest`
+- `:history`
+- `:save output.txt`
+- `:quit`
+
+## Non-interactive mode
+
+```bash
+./termux_coder_ai.sh --version
+./termux_coder_ai.sh --selftest
+./termux_coder_ai.sh --prompt "create a python todo app"
+```
+
+## Output behavior
+
+- Generates practical code templates for Python/Bash/C/JS requests.
+- Can scaffold starter projects for Python/Bash/C.
+- Stores state in `~/.termux_coder_ai/`.
+
+## Important note
+
+This is a **local rule-based coding engine** implemented for reliability in restricted environments.
+It does not depend on neural model binaries, so it remains usable offline and on constrained mobile devices.
 Inside the assistant:
 
 - `:help`
