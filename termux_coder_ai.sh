@@ -58,6 +58,35 @@ load_config() {
 }
 
 save_config() {
+$APP_NAME v$APP_VERSION
+Dependency-free local coding model for Termux (non-root)
+Commands: :help :mode <chat|code|shell> :status :history :save <file> :quit
+CLI flags: --prompt "..." --version --selftest
+EOF
+}
+
+help_text() {
+  cat <<'EOF'
+Modes:
+  code  - synthesize code from prompt features
+  chat  - discuss engineering choices
+  shell - suggest terminal workflow
+
+Commands:
+  :help
+  :mode <chat|code|shell>
+  :status
+  :history
+  :save <file>
+  :quit
+
+This uses an on-device rule+scoring model (no package install, no network).
+EOF
+}
+
+status_text() {
+  local lines
+  lines=$(wc -l < "$HISTORY_FILE" | awk '{print $1}')
   cat <<EOF_CFG | safe_write_file "$CONFIG_FILE"
 MODE=$MODE
 EOF_CFG
