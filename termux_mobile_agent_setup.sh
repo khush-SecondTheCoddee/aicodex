@@ -52,16 +52,9 @@ source "$VENV_DIR/bin/activate"
 
 log "Installing Python packages..."
 pip install --upgrade pip wheel setuptools
-if ! pip install --upgrade \
+pip install --upgrade \
   llama-cpp-python==0.2.90 \
-  rich typer prompt-toolkit watchdog pyyaml; then
-  warn "Primary Python package install failed. Retrying with Termux-safe fallbacks..."
-  pip install --upgrade \
-    'numpy<2' \
-    'llama-cpp-python==0.2.90' \
-    rich typer prompt-toolkit watchdog pyyaml || \
-    fail "Python dependency installation failed. Re-run after 'pkg upgrade -y' and ensure build tools are present."
-fi
+  rich typer prompt-toolkit watchdog pyyaml orjson
 
 if [[ ! -d "$LLAMA_DIR" ]]; then
   log "Cloning llama.cpp..."
