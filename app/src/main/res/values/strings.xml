@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Custom Browser</string>
+    <string name="go">Go</string>
+    <string name="url_hint">https://example.org</string>
+</resources>
