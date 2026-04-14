@@ -1,0 +1,30 @@
+{
+  "name": "Your Name",
+  "role": "Full-Stack Developer",
+  "location": "New York, USA",
+  "bio": "I build useful and elegant web experiences. Replace this text with your own story.",
+  "email": "you@example.com",
+  "avatarUrl": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&q=80",
+  "skills": ["Next.js", "TypeScript", "Node.js", "UI/UX", "REST APIs"],
+  "socialLinks": [
+    {
+      "label": "GitHub",
+      "url": "https://github.com/yourusername"
+    },
+    {
+      "label": "LinkedIn",
+      "url": "https://linkedin.com/in/yourusername"
+    }
+  ],
+  "projects": [
+    {
+      "name": "Portfolio Site",
+      "description": "A clean personal website built with Next.js and deployed on Vercel.",
+      "url": "https://example.com"
+    },
+    {
+      "name": "Task Manager",
+      "description": "A productivity app with team collaboration features."
+    }
+  ]
+}
